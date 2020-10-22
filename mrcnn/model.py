@@ -1708,8 +1708,6 @@ class DataGenerator(KU.Sequence):
         return int(np.ceil(len(self.image_ids) / float(self.batch_size)))
 
     def __getitem__(self, idx):
-        print("idx:")
-        print(idx)
         b = 0
         image_index = -1
         while b < self.batch_size:
@@ -1729,7 +1727,6 @@ class DataGenerator(KU.Sequence):
             # where we train on a subset of classes and the image doesn't
             # have any of the classes we care about.
             if not np.any(gt_class_ids > 0):
-                print("Continue")
                 continue
 
             # RPN Targets
