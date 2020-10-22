@@ -1684,6 +1684,7 @@ class DataGenerator(KU.Sequence):
                  random_rois=0, detection_targets=False):
         print("Datagenerator called") 
         self.image_ids = np.copy(dataset.image_ids)
+	print(self.image_ids)
         self.dataset = dataset
         self.config = config
 
