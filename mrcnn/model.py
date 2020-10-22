@@ -1704,9 +1704,13 @@ class DataGenerator(KU.Sequence):
         self.detection_targets = detection_targets
 
     def __len__(self):
+        print("Length:")
+        print(int(np.ceil(len(self.image_ids) / float(self.batch_size))))
         return int(np.ceil(len(self.image_ids) / float(self.batch_size)))
 
     def __getitem__(self, idx):
+        print("idx:")
+	print(idx)
         b = 0
         image_index = -1
         while b < self.batch_size:
