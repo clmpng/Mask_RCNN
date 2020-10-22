@@ -1715,7 +1715,6 @@ class DataGenerator(KU.Sequence):
         while b < self.batch_size:
             # Increment index to pick next image. Shuffle if at the start of an epoch.
             image_index = (image_index + 1) % len(self.image_ids)
-            print(image_index)
 
             if self.shuffle and image_index == 0:
                 np.random.shuffle(self.image_ids)
