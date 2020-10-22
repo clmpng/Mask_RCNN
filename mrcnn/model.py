@@ -1710,7 +1710,7 @@ class DataGenerator(KU.Sequence):
 
     def __getitem__(self, idx):
         print("idx:")
-	print(idx)
+        print(idx)
         b = 0
         image_index = -1
         while b < self.batch_size:
