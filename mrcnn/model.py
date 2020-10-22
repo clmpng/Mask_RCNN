@@ -1240,7 +1240,6 @@ def load_image_gt(dataset, config, image_id, augmentation=None):
         max_dim=config.IMAGE_MAX_DIM,
         mode=config.IMAGE_RESIZE_MODE)
     mask = utils.resize_mask(mask, scale, padding, crop)
-    print(image_id)
     print(image.shape)
 
     # Augmentation
@@ -1731,6 +1730,7 @@ class DataGenerator(KU.Sequence):
             # where we train on a subset of classes and the image doesn't
             # have any of the classes we care about.
             if not np.any(gt_class_ids > 0):
+		print("Continue")
                 continue
 
             # RPN Targets
