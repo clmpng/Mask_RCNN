@@ -1240,6 +1240,7 @@ def load_image_gt(dataset, config, image_id, augmentation=None):
         max_dim=config.IMAGE_MAX_DIM,
         mode=config.IMAGE_RESIZE_MODE)
     mask = utils.resize_mask(mask, scale, padding, crop)
+    print(image_id)
     print(image.shape)
 
     # Augmentation
@@ -1706,7 +1707,6 @@ class DataGenerator(KU.Sequence):
 
     def __getitem__(self, idx):
         b = 0
-        log("Get Item") 
         image_index = -1
         while b < self.batch_size:
             # Increment index to pick next image. Shuffle if at the start of an epoch.
