@@ -1240,6 +1240,7 @@ def load_image_gt(dataset, config, image_id, augmentation=None):
         max_dim=config.IMAGE_MAX_DIM,
         mode=config.IMAGE_RESIZE_MODE)
     mask = utils.resize_mask(mask, scale, padding, crop)
+    print(image.shape)
 
     # Augmentation
     # This requires the imgaug lib (https://github.com/aleju/imgaug)
