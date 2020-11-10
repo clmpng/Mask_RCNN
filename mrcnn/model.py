@@ -1240,7 +1240,6 @@ def load_image_gt(dataset, config, image_id, augmentation=None):
         max_dim=config.IMAGE_MAX_DIM,
         mode=config.IMAGE_RESIZE_MODE)
     mask = utils.resize_mask(mask, scale, padding, crop)
-    print(image.shape)
 
     # Augmentation
     # This requires the imgaug lib (https://github.com/aleju/imgaug)
@@ -1683,7 +1682,7 @@ class DataGenerator(KU.Sequence):
                  random_rois=0, detection_targets=False):
         print("Datagenerator called") 
         self.image_ids = np.copy(dataset.image_ids)
-        print(self.image_ids)
+        #print(self.image_ids)
         self.dataset = dataset
         self.config = config
 
@@ -1703,8 +1702,6 @@ class DataGenerator(KU.Sequence):
         self.detection_targets = detection_targets
 
     def __len__(self):
-        print("Length:")
-        print(int(np.ceil(len(self.image_ids) / float(self.batch_size))))
         return int(np.ceil(len(self.image_ids) / float(self.batch_size)))
 
     def __getitem__(self, idx):

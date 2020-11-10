@@ -382,6 +382,7 @@ class Dataset(object):
         logging.warning("You are using the default load_mask(), maybe you need to define your own one.")
         mask = np.empty([0, 0, 0])
         class_ids = np.empty([0], np.int32)
+        print(mask)
         return mask, class_ids
 
 
