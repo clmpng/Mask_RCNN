@@ -357,6 +357,7 @@ class Dataset(object):
         """
         # Load image
         image = skimage.io.imread(self.image_info[image_id]['path'])
+        print(self.image_info[image_id]['path'])
         # If grayscale. Convert to RGB for consistency.
         if image.ndim != 3:
             image = skimage.color.gray2rgb(image)
@@ -655,9 +656,9 @@ def trim_zeros(x):
 
 
 def compute_matches(gt_boxes, gt_class_ids, gt_masks,
-                    pred_boxes, pred_class_ids, pred_scores, pred_masks,
+                    pred_boxes, pred_class_ids, pred_scores, pred_masks, class_id,
                     iou_threshold=0.5, score_threshold=0.0):
-    """Finds matches between prediction and ground truth instances.
+    """Finds matches between prediction and ground truth instances. Edit: Class_id added to compute for each class
 
     Returns:
         gt_match: 1-D array. For each GT box it has the index of the matched
@@ -666,12 +667,23 @@ def compute_matches(gt_boxes, gt_class_ids, gt_masks,
                     the matched ground truth box.
         overlaps: [pred_boxes, gt_boxes] IoU overlaps.
     """
+
+    #Use only the information of a specific class
+    gt_boxes=gt_boxes[np.where(gt_class_ids==class_id)]
+    gt_masks=gt_masks[:,:,gt_class_ids==class_id]
+    pred_boxes=pred_boxes[np.where(pred_class_ids==class_id)]
+    pred_scores=pred_scores[np.where(pred_class_ids==class_id)]
+    pred_masks=pred_masks[:,:,pred_class_ids==class_id]
+    pred_class_ids=np.delete(pred_class_ids,np.where(pred_class_ids!=class_id))
+    gt_class_ids=np.delete(gt_class_ids,np.where(gt_class_ids!=class_id))
+
     # Trim zero padding
     # TODO: cleaner to do zero unpadding upstream
     gt_boxes = trim_zeros(gt_boxes)
     gt_masks = gt_masks[..., :gt_boxes.shape[0]]
     pred_boxes = trim_zeros(pred_boxes)
     pred_scores = pred_scores[:pred_boxes.shape[0]]
+
     # Sort predictions by score from high to low
     indices = np.argsort(pred_scores)[::-1]
     pred_boxes = pred_boxes[indices]
@@ -712,9 +724,30 @@ def compute_matches(gt_boxes, gt_class_ids, gt_masks,
 
     return gt_match, pred_match, overlaps
 
+def compute_f1(gt_boxes, gt_class_ids, gt_masks,
+               pred_boxes, pred_class_ids, pred_scores, pred_masks,class_id,
+               iou_threshold=0.5):
+     """
+     Compute precision, recall and f1 for a single image
+     """  
+     gt_match, pred_match, overlaps = compute_matches(
+     gt_boxes, gt_class_ids, gt_masks,
+     pred_boxes, pred_class_ids, pred_scores, pred_masks,class_id,
+     iou_threshold)
 
+     if len(pred_match) != 0:
+        precisions = np.cumsum(pred_match > -1) / (np.arange(len(pred_match)) + 1) 
+        precision = precisions[len(precisions)-1] 
+        recalls = np.cumsum(pred_match > -1).astype(np.float32) / len(gt_match)
+        recall = recalls[len(recalls)-1]
+        f1 = 2*(precision*recall)/(precision+recall)
+     else:
+        precision = recall = f1 = "undefined"
+        print("No instances of class_id {} to be detected".format(class_id))  
+     return precision, recall, f1 
+     
 def compute_ap(gt_boxes, gt_class_ids, gt_masks,
-               pred_boxes, pred_class_ids, pred_scores, pred_masks,
+               pred_boxes, pred_class_ids, pred_scores, pred_masks, class_id,
                iou_threshold=0.5):
     """Compute Average Precision at a set IoU threshold (default 0.5).
 
@@ -727,7 +760,7 @@ def compute_ap(gt_boxes, gt_class_ids, gt_masks,
     # Get matches and overlaps
     gt_match, pred_match, overlaps = compute_matches(
         gt_boxes, gt_class_ids, gt_masks,
-        pred_boxes, pred_class_ids, pred_scores, pred_masks,
+        pred_boxes, pred_class_ids, pred_scores, pred_masks, class_id,
         iou_threshold)
 
     # Compute precision and recall at each prediction box step
@@ -737,7 +770,6 @@ def compute_ap(gt_boxes, gt_class_ids, gt_masks,
     # Pad with start and end values to simplify the math
     precisions = np.concatenate([[0], precisions, [0]])
     recalls = np.concatenate([[0], recalls, [1]])
-
     # Ensure precision values decrease but don't increase. This way, the
     # precision value at each recall threshold is the maximum it can be
     # for all following recall thresholds, as specified by the VOC paper.
