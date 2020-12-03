@@ -352,6 +352,16 @@ class Dataset(object):
         """
         return self.image_info[image_id]["path"]
 
+    #def load_depth_image(self, path):
+       #Load depth image from "path" and normalize it
+       #depth = skimage.io.imread(path)
+       #min_depth = np.min(depth)
+       #max_depth = np.max(depth)
+       #depth = (depth-min_depth) / (max_depth - min_depth)*255
+       #depth_image = depth[:, :, np.newaxis]
+       #return depth_image
+
+   
     def load_image(self, image_id):
         """Load the specified image and return a [H,W,3] Numpy array.
         """
@@ -364,7 +374,22 @@ class Dataset(object):
         # If has an alpha channel, remove it for consistency
         if image.shape[-1] == 4:
             image = image[..., :3]
-        return image
+        #determine depth image path and load depth image
+        directory, file_name = os.path.split(self.image_info[image_id]['path'])
+        file_name_short = file_name.replace('_', '.').split('.')[0]
+        directory, folder = os.path.split(directory)
+        directory, train_or_val = os.path.split(directory)
+        depth_file_name = "depth" + file_name_short.replace('left', '') + ".png"
+        depth_path= os.path.join(directory, "depth",train_or_val, folder, depth_file_name)
+        print(depth_path)
+        depth = skimage.io.imread(depth_path)
+        min_depth = np.min(depth)
+        max_depth = np.max(depth)
+        depth = (depth-min_depth) / (max_depth - min_depth)*255
+        depth_image = depth[:, :, np.newaxis]
+        # eig noch als eigene funktion "Load_depth_image" machen
+        rgbd_image = np.concatenate((image, depth_image), axis=2)
+        return rgbd_image
 
     def load_mask(self, image_id):
         """Load instance masks for the given image.

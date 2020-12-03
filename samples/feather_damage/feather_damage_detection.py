@@ -130,14 +130,16 @@ class CocoLikeDataset(utils.Dataset):
                 seen_images[image_id] = image
                 try:
                     #image_file_name = format(image['id'], '08d')+"_"+image['file_name']
-                    #print(image_file_name)
-                    #image_file_name = image['file_name'] 
+                    image_file_name = image['file_name'] 
+                    print(image_file_name)
                     image_width = image['width']
                     image_height = image['height']
                 except KeyError as key:
                     print("Warning: Skipping image (id: {}) with missing key: {}".format(image_id, key))
 
-                find_file = glob.glob(images_dir + "/**/" + format(image['id'], '08d')+"*", recursive = True) # search in all subdirectories 
+                #find_file = glob.glob(images_dir + "/**/" + format(image['id'], '08d')+"*", recursive = True) # search in all subdirectories 
+                find_file = glob.glob(images_dir + "/**/" + image_file_name, recursive = True) # search in all subdire$
+                print(find_file)
                 if len(find_file) >0:
                    image_path = os.path.abspath(os.path.join(find_file[0]))               
                 else:
@@ -223,24 +225,24 @@ if(sys.argv[1] == "train"):
        # are different due to the different number of classes
        # See README for instructions to download the COCO weights
        model.load_weights(COCO_MODEL_PATH, by_name=True,
-                       exclude=["mrcnn_class_logits", "mrcnn_bbox_fc", 
+                       exclude=["conv1", "mrcnn_class_logits", "mrcnn_bbox_fc", 
                                 "mrcnn_bbox", "mrcnn_mask"])
    elif init_with == "last":
        # Load the last model you trained and continue training
        model.load_weights(model.find_last(), by_name=True)
 
    # define augmentations (applied half of the time): left-right flip and brightness multiplication
-   augmentation = iaa.Sometimes(0.5, [
-                    iaa.Fliplr(0.5),
-                    iaa.Multiply((0.6, 1.5))
-                ])
+   #augmentation = iaa.Sometimes(0.5, [
+   #                 iaa.Fliplr(0.5),
+   #                iaa.Multiply((0.6, 1.5))
+   #             ])
+   
    # Fine-tune all layers
    start_train = time.time()
    model.train(dataset_train, dataset_val, 
-               learning_rate=config.LEARNING_RATE / 10,
+               learning_rate=config.LEARNING_RATE,
                epochs=300, 
-               layers="all",
-               augmentation=augmentation)
+               layers="all")
    end_train = time.time()
    minutes = round((end_train - start_train) / 60, 2)
    print(f'Training took {minutes} minutes')
@@ -248,9 +250,7 @@ if(sys.argv[1] == "train"):
 elif(sys.argv[1] == "eval"):
    
    print("Evaluation started.. ")
-   
    inference_config.display()
-
    ## Model Evaluation
    from mrcnn.utils import compute_matches, compute_ap, compute_f1 
    class EvalImage():
