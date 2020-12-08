@@ -240,8 +240,8 @@ if(sys.argv[1] == "train"):
    # Fine-tune all layers
    start_train = time.time()
    model.train(dataset_train, dataset_val, 
-               learning_rate=config.LEARNING_RATE,
-               epochs=300, 
+               learning_rate=config.LEARNING_RATE/2,
+               epochs=1000, 
                layers="all")
    end_train = time.time()
    minutes = round((end_train - start_train) / 60, 2)
@@ -291,8 +291,8 @@ elif(sys.argv[1] == "eval"):
             gt_match, pred_match, overlaps = compute_matches(gt_bbox, gt_class_id, gt_mask, r["rois"], r["class_ids"], r["scores"], r['masks'], class_id)
             AP, precisions, recalls, _ = compute_ap(gt_bbox, gt_class_id, gt_mask, r["rois"], r["class_ids"], r["scores"], r['masks'], class_id)
             #precision, recall, f1 = compute_f1(gt_bbox, gt_class_id, gt_mask, r["rois"], r["class_ids"], r["scores"], r['masks'], class_id)
-            #visualize.display_instances(image, r['rois'], r['masks'], r['class_ids'], 
-            #                       dataset_val.class_names, r['scores'], figsize=(8,8))
+            #visualize.display_instances(image[..., :3], r['rois'], r['masks'], r['class_ids'], 
+            #                       dataset_val.class_names, r['scores'], figsize=(8,8), savepath=image_id) # added save option 
             true_positives = sum(i> -1 for i in pred_match)
             detections = len(pred_match)
             gt_instances = len(gt_match)
@@ -331,7 +331,7 @@ elif(sys.argv[1] == "eval"):
 
    # Get path to saved weights
    # Either set a specific path or find last trained weights
-   model_path = os.path.join(ROOT_DIR, "/media/christian/SamsungSSD/tensorflow_logs/attribute_training_300_epochs/mask_rcnn_feather__damage_0294.h5")
+   model_path = os.path.join(ROOT_DIR, "/media/christian/SamsungSSD/tensorflow_logs/attribute_training_1000_epochs_depth_lr00005/mask_rcnn_feather__damage_1000.h5")
    # model_path = model.find_last()
 
    # Load trained weights (fill in path to trained weights here)
