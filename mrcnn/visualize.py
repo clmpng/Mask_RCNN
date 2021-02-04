@@ -43,6 +43,7 @@ def display_images(images, titles=None, cols=4, cmap=None, norm=None,
     interpolation: Optional. Image interpolation to use for display.
     """
     titles = titles if titles is not None else [""] * len(images)
+    test = titles 
     rows = len(images) // cols + 1
     plt.figure(figsize=(14, 14 * rows // cols))
     i = 1
@@ -54,6 +55,7 @@ def display_images(images, titles=None, cols=4, cmap=None, norm=None,
                    norm=norm, interpolation=interpolation)
         i += 1
     plt.show()
+    plt.savefig('activations_%s.jpg' % titles)
 
 
 def random_colors(N, bright=True):
@@ -81,7 +83,7 @@ def apply_mask(image, mask, color, alpha=0.5):
 
 
 def display_instances(image, boxes, masks, class_ids, class_names,
-                      scores=None, title="",
+                      class_scores=None, scores=None, title="",
                       figsize=(16, 16), ax=None,
                       show_mask=True, show_bbox=True,
                       colors=None, captions=None, savepath=None):
@@ -90,7 +92,7 @@ def display_instances(image, boxes, masks, class_ids, class_names,
     masks: [height, width, num_instances]
     class_ids: [num_instances]
     class_names: list of class names of the dataset
-    scores: (optional) confidence scores for each box
+    class_scores: (optional) confidence scores for each box
     title: (optional) Figure title
     show_mask, show_bbox: To show masks and bounding boxes or not
     figsize: (optional) the size of the image
@@ -138,13 +140,14 @@ def display_instances(image, boxes, masks, class_ids, class_names,
         # Label
         if not captions:
             class_id = class_ids[i]
+            class_score = class_scores[i] if class_scores is not None else None
             score = scores[i] if scores is not None else None
             label = class_names[class_id]
-            caption = "{} {:.3f}".format(label, score) if score else label
+            caption = "{} {:.3f} \nScore: {:.1f}".format(label, class_score, score) if class_score else label
         else:
             caption = captions[i]
         ax.text(x1, y1 + 8, caption,
-                color='w', size=11, backgroundcolor="none")
+                color='w', size=11, backgroundcolor="black")
 
         # Mask
         mask = masks[:, :, i]

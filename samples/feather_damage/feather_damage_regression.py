@@ -48,7 +48,7 @@ class TrainingConfig(Config):
     IMAGES_PER_GPU = 1
 
     # Number of classes (including background)
-    NUM_CLASSES = 1 + 2  # background + 2 (feather damage + no feather damage)
+    NUM_CLASSES = 1 + 1  # background + 1 (hen)
 
     # All of our training images are 512x512
     IMAGE_MIN_DIM = None
@@ -96,20 +96,19 @@ class CocoLikeDataset(utils.Dataset):
         # Add the class names using the base method from utils.Dataset
         source_name = "coco_like"
         for category in coco_json['categories']:
-            class_id = category['id'] 
-            class_name = category['name'] 
-            if class_id < 1:
+           class_id = category['id'] 
+           class_name = category['name'] 
+           if class_id < 1:
                 print('Error: Class id for "{}" cannot be less than one. (0 is reserved for the background)'.format(class_name))
-                return
-            
-            self.add_class(source_name, class_id, class_name)
+                return    
+        self.add_class(source_name, class_id, class_name)
          
         classes = []     # to have a list which just contains the class names and the number of instances for each 
         for element in self.class_info:
            class_entry = {
                          'name' : element['name'],
                          'count' : 0
-                         }
+                        }
            classes.append(class_entry)
  
         # Get all annotations
@@ -150,11 +149,14 @@ class CocoLikeDataset(utils.Dataset):
                   if element['iscrowd']:
                     hasCrowd = True 
                 
+                #print("adding:")
+                #print(image_id)
+                #print(image_path)
                 # Add the image using the base method from utils.Dataset (if file exists)
                 if os.path.isfile(image_path):
                  if not hasCrowd:  # to avoid that images of object with "multiple parts" are added
                   for annotation in image_annotations:
-                     id = (annotation['category_id'])
+                     id = (annotation['category_id'])+1
                      classes[id]['count'] +=1
                   self.add_image(
                       source=source_name,
@@ -182,9 +184,18 @@ class CocoLikeDataset(utils.Dataset):
         annotations = image_info['annotations']
         instance_masks = []
         class_ids = []
+        scores = []
         
         for annotation in annotations:
-            class_id = annotation['category_id']
+            class_id = annotation['category_id']+1
+            attributes = [element for element in  annotation['extra']['attributes'] if element.isdigit()]#
+            if len(attributes) > 0:
+               score = attributes[0]
+            else: 
+               score = -1 
+               print("Missing Score at image", image_id)
+            print("SCORE:")
+            print(score) 
             mask = Image.new('1', (image_info['width'], image_info['height']))
             mask_draw = ImageDraw.ImageDraw(mask, '1')
             for segmentation in annotation['segmentation']:
@@ -192,19 +203,22 @@ class CocoLikeDataset(utils.Dataset):
                 bool_array = np.array(mask) > 0
                 instance_masks.append(bool_array)
                 class_ids.append(class_id)
+                scores.append(score)
+
 
         mask = np.dstack(instance_masks)
         class_ids = np.array(class_ids, dtype=np.int32)
-        
-        return mask, class_ids
+        scores = np.array(scores, dtype=np.float32)
+
+        return mask, class_ids, scores
 
 dataset_train = CocoLikeDataset()
-dataset_train.load_data('/media/christian/SamsungSSD/ZED/datasets/1200_images/attribute_annotations.json', '/media/christian/SamsungSSD/ZED/datasets/1200_images/train/')
+dataset_train.load_data('/media/christian/SamsungSSD/ZED/datasets/1400_images/score_annotations.json', '/media/christian/SamsungSSD/ZED/datasets/1400_images/train/')
 dataset_train.prepare()
 print(dataset_train.num_classes)
 
 dataset_val = CocoLikeDataset()
-dataset_val.load_data('/media/christian/SamsungSSD/ZED/datasets/1200_images/attribute_annotations.json', '/media/christian/SamsungSSD/ZED/datasets/1200_images/val/')
+dataset_val.load_data('/media/christian/SamsungSSD/ZED/datasets/1400_images/score_annotations.json', '/media/christian/SamsungSSD/ZED/datasets/1400_images/val/')
 dataset_val.prepare()
 	
 #### Training ####
@@ -214,7 +228,7 @@ if(sys.argv[1] == "train"):
    # Create model in training mode
    model = modellib.MaskRCNN(mode="training", config=config,
                           model_dir=MODEL_DIR)
-
+   
    # Which weights to start with?
    init_with = "coco"  # imagenet, coco, or last
 
@@ -226,23 +240,39 @@ if(sys.argv[1] == "train"):
        # See README for instructions to download the COCO weights
        model.load_weights(COCO_MODEL_PATH, by_name=True,
                        exclude=["conv1", "mrcnn_class_logits", "mrcnn_bbox_fc", 
-                                "mrcnn_bbox", "mrcnn_mask"])
+                                "mrcnn_bbox", "mrcnn_mask", "mrcnn_score_fc", "mrcnn_score"])
    elif init_with == "last":
-       # Load the last model you trained and continue training
-       model.load_weights(model.find_last(), by_name=True)
+       # Load weights from previous training 
+       #model.load_weights(model.find_last(), by_name=True)
+       weights_path = os.path.join(ROOT_DIR, "/media/christian/SamsungSSD/tensorflow_logs/attribute_training_1000_epochs_depth_lr00005/mask_rcnn_feather__damage_0964.h5")  
+       model.load_weights(weights_path, by_name=True,
+                       exclude=[ "mrcnn_class_logits", "mrcnn_bbox_fc",
+                                "mrcnn_bbox", "mrcnn_mask", "mrcnn_score_fc", "mrcnn_score"])
 
    # define augmentations (applied half of the time): left-right flip and brightness multiplication
-   #augmentation = iaa.Sometimes(0.5, [
-   #                 iaa.Fliplr(0.5),
-   #                iaa.Multiply((0.6, 1.5))
-   #             ])
+   augmentation = iaa.Sometimes(0.5, [
+                    iaa.Fliplr(0.5),
+                    iaa.Affine(scale=(0.5, 1.5))
+                   #iaa.Multiply((0.6, 1.5)) #probably not working for RGBD
+                ])
+   
+   # Train the head branches and the first conv layer (because of additional depth channel)
+   #start_train = time.time()
+   #model.train(dataset_train, dataset_val, 
+   #         learning_rate=config.LEARNING_RATE, 
+   #         epochs=6, 
+   #         layers='heads')
+   #end_train = time.time()
+   #minutes = round((end_train - start_train) / 60, 2)
+   #print(f'Training took {minutes} minutes')
    
    # Fine-tune all layers
    start_train = time.time()
    model.train(dataset_train, dataset_val, 
-               learning_rate=config.LEARNING_RATE/2,
+               learning_rate=config.LEARNING_RATE,
                epochs=1000, 
-               layers="all")
+               layers="all",
+               augmentation=augmentation)
    end_train = time.time()
    minutes = round((end_train - start_train) / 60, 2)
    print(f'Training took {minutes} minutes')
@@ -251,6 +281,7 @@ elif(sys.argv[1] == "eval"):
    
    print("Evaluation started.. ")
    inference_config.display()
+  
    ## Model Evaluation
    from mrcnn.utils import compute_matches, compute_ap, compute_f1 
    class EvalImage():
@@ -267,36 +298,50 @@ elif(sys.argv[1] == "eval"):
        recall_dict     = {}
        true_positives_total = [0]*len(self.dataset.class_info) # array with true positives for each class 
        detections_total = [0]*len(self.dataset.class_info) # detections for each class  
-       gt_instances_total = [0]*len(self.dataset.class_info) # gt_instances for each class 
+       gt_instances_total = [0]*len(self.dataset.class_info) # gt_instances for each class
+       squared_errors_total = [[]]*len(self.dataset.class_info)  # squared score error for each class
        for index,image_id in enumerate(self.dataset.image_ids):
          print('\n')
          print("Processing image:id ",image_id) 
          # load image, bounding boxes and masks for the image id
-         image, image_meta, gt_class_id, gt_bbox, gt_mask = modellib.load_image_gt(self.dataset, self.cfg,image_id)
-         print("GT_Class_ID:")
-         print(gt_class_id)
-         print("image_meta:")
-         print(image_meta)
+         image, image_meta, gt_class_id, gt_bbox, gt_mask, gt_score = modellib.load_image_gt(self.dataset, self.cfg,image_id)
+         print("GT_Score:")
+         print(gt_score)
          # convert pixel values (e.g. center)
          #scaled_image = modellib.mold_image(image, self.cfg)
          # convert image into one sample
          sample = np.expand_dims(image, 0)
          # print(len(image))
          # make prediction
-         yhat = self.model.detect(sample, verbose=0)
+         yhat = self.model.detect(sample, verbose=1)
          # extract results for first sample
          r = yhat[0]
          # calculate statistics, including AP for each class
          for items in self.dataset.class_info:
+          if items["id"] >= 1: # do not perform calculations for background class 
             class_name = items["name"]
-            if class_name == "BG":
-               continue
             class_id = items["id"]
-            gt_match, pred_match, overlaps = compute_matches(gt_bbox, gt_class_id, gt_mask, r["rois"], r["class_ids"], r["scores"], r['masks'], class_id)
-            AP, precisions, recalls, _ = compute_ap(gt_bbox, gt_class_id, gt_mask, r["rois"], r["class_ids"], r["scores"], r['masks'], class_id)
-            #precision, recall, f1 = compute_f1(gt_bbox, gt_class_id, gt_mask, r["rois"], r["class_ids"], r["scores"], r['masks'], class_id)
-            #visualize.display_instances(image[..., :3], r['rois'], r['masks'], r['class_ids'], 
-            #                       dataset_val.class_names, r['scores'], figsize=(8,8), savepath=image_id) # added save option 
+            print("Class_id: ", r["class_ids"])
+            print("Props: ", r["class_scores"])
+            print("Feather_Scores: ", r["scores"])
+            gt_match, pred_match, overlaps = compute_matches(gt_bbox, gt_class_id, gt_mask, r["rois"], r["class_ids"], r["class_scores"], r['masks'], class_id)
+            AP, precisions, recalls, _ = compute_ap(gt_bbox, gt_class_id, gt_mask, r["rois"], r["class_ids"], r["class_scores"], r['masks'], class_id)
+            visualize.display_instances(image[..., :3], r['rois'], r['masks'], r['class_ids'], 
+                                   dataset_val.class_names, r['class_scores'], r['scores'], figsize=(8,8), savepath=image_id) # added scores and save option  
+            # Calculate Score Error
+            pred_match_indices = pred_match[(pred_match>-1)].astype(int) # For each correctly predicted box it has the index of the matched gt box. 
+            gt_match_indices = gt_match[(gt_match>-1)].astype(int) # for each correctly matched gt box it has the index of the matched predicted box   
+            print("gt_score:", gt_score)
+            print("gt_bbox:", gt_bbox)
+            print("pred_match: ", pred_match)
+            pred_match_scores = gt_score[pred_match_indices] # scores of each correctly predicted box
+            error = np.absolute(np.subtract(gt_score[pred_match_indices],r["scores"][gt_match_indices]))
+            squared_error = np.square(error)
+            squared_error_image = np.sum(squared_error)
+            print("MSE image: ", squared_error_image/len(pred_match_indices))
+            squared_errors_total[class_id] = np.concatenate((squared_errors_total[class_id], squared_error))
+            print("Current MSE: ", np.mean(squared_errors_total[class_id]))
+            # calculate and sum up true positives and detections
             true_positives = sum(i> -1 for i in pred_match)
             detections = len(pred_match)
             gt_instances = len(gt_match)
@@ -312,30 +357,56 @@ elif(sys.argv[1] == "eval"):
             precisions_dict[image_id] = np.mean(precisions)
             recall_dict[image_id] = np.mean(recalls)
             # store
-            #APs.append(AP)
+            APs.append(AP)
+            
+            #Analyze activations 
+            import tensorflow as tf
+            activations = self.model.run_graph([image], [
+            ("input_image",        tf.identity(self.model.keras_model.get_layer("input_image").output)),
+            ("conv1",          self.model.keras_model.get_layer("conv1").output),
+            ("res2c_out",          self.model.keras_model.get_layer("res2c_out").output),
+            ("res3c_out",          self.model.keras_model.get_layer("res3c_out").output),
+            ("fpn_p4",          self.model.keras_model.get_layer("fpn_p4").output),
+            ("rpn_bbox",           self.model.keras_model.get_layer("rpn_bbox").output),
+            ("roi",                self.model.keras_model.get_layer("ROI").output),
+            ])
 
-       # calculate the mean AP, precision, recall, f1  across all images
-       #mAP = np.mean(APs)
+            conv_sum = activations["conv1"][0,:,:,:].mean(axis=2)
+            conv_sum=np.expand_dims(conv_sum, axis=2)
+            res2c_sum = activations["res2c_out"][0,:,:,:].mean(axis=2)
+            res2c_sum=np.expand_dims(res2c_sum, axis=2)
+            print(activations["conv1"][0,:,:,:].shape)
+            print(conv_sum.shape)
+            #visualize.display_images(np.transpose(activations["input_image"][0,:,:,:4], [2, 0, 1]),titles=[image_id,2,3,4,5,6])
+            #visualize.display_images(np.transpose(activations["conv1"][0,:,:,:], [2, 0, 1]),titles=["Conv1", image_id, 3, 4,5,6,7,8,9,10])
+            #visualize.display_images(np.transpose(conv_sum, [2, 0, 1]),titles=["Conv1_Sum", image_id])
+            #visualize.display_images(np.transpose(res2c_sum, [2, 0, 1]),titles=["Res2C_Sum", image_id])
+            #visualize.display_images(np.transpose(activations["res3c_out"][0,:,:,:5], [2, 0, 1]),titles=["RES3C", image_id,3 ,4,5,6,7,8,9,10])
+
+       # calculate the mean AP, precision, recall, f1, MSE  across all images
+       mAP = np.mean(APs)
        for items in self.dataset.class_info:
             class_name = items["name"]
             if class_name == "BG":
                continue
             class_id = items["id"]
             precision = true_positives_total[class_id]/detections_total[class_id]
-            recall = true_positives_total[class_id]/gt_instances_total[class_id] 
+            recall = true_positives_total[class_id]/gt_instances_total[class_id]
+            MSE = np.mean(squared_errors_total[class_id]) 
             print(class_name + " :")
-            #print("mAp: ", mAP)
+            print("mAp: ", mAP)
             print("precision: ", precision)
             print("recall: ", recall) 
+            print("MSE: ", MSE)
 
        return 0 # mAP,precisions_dict,recall_dict
 
    #Create model in inference mode 
    model_inference = modellib.MaskRCNN(mode="inference", config=inference_config, model_dir=MODEL_DIR)
-
+   print(model_inference.keras_model.summary())
    # Get path to saved weights
    # Either set a specific path or find last trained weights
-   model_path = os.path.join(ROOT_DIR, "/media/christian/SamsungSSD/tensorflow_logs/attribute_training_1000_epochs_depth_lr00005/mask_rcnn_feather__damage_1000.h5")
+   model_path = os.path.join(ROOT_DIR, "/media/christian/SamsungSSD/tensorflow_logs/feather__damage20210129T1144/mask_rcnn_feather__damage_0480.h5")
    # model_path = model.find_last()
 
    # Load trained weights (fill in path to trained weights here)

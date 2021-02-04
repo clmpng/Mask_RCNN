@@ -307,7 +307,7 @@ class Dataset(object):
         self.class_ids = np.arange(self.num_classes)
         self.class_names = [clean_name(c["name"]) for c in self.class_info]
         self.num_images = len(self.image_info)
-        self._image_ids = np.arange(self.num_images)
+        self._image_ids = np.arange(self.num_images) 
 
         # Mapping from source class and image IDs to internal IDs
         self.class_from_source_map = {"{}.{}".format(info['source'], info['id']): id
@@ -352,16 +352,7 @@ class Dataset(object):
         """
         return self.image_info[image_id]["path"]
 
-    #def load_depth_image(self, path):
-       #Load depth image from "path" and normalize it
-       #depth = skimage.io.imread(path)
-       #min_depth = np.min(depth)
-       #max_depth = np.max(depth)
-       #depth = (depth-min_depth) / (max_depth - min_depth)*255
-       #depth_image = depth[:, :, np.newaxis]
-       #return depth_image
-
-   
+          
     def load_image(self, image_id):
         """Load the specified image and return a [H,W,3] Numpy array.
         """
@@ -383,11 +374,16 @@ class Dataset(object):
         depth_path= os.path.join(directory, "depth",train_or_val, folder, depth_file_name)
         print(depth_path)
         depth = skimage.io.imread(depth_path)
+        #depth threshold in milimeters
+        #threshold = 1500
+        #idx = depth[:] > threshold
+        #depth[idx] = threshold
+        #normalize depth:
         min_depth = np.min(depth)
         max_depth = np.max(depth)
         depth = (depth-min_depth) / (max_depth - min_depth)*255
         depth_image = depth[:, :, np.newaxis]
-        # eig noch als eigene funktion "Load_depth_image" machen
+        # to do: exclude this to own function "Load_depth_image"
         rgbd_image = np.concatenate((image, depth_image), axis=2)
         return rgbd_image
 
@@ -683,7 +679,7 @@ def trim_zeros(x):
 def compute_matches(gt_boxes, gt_class_ids, gt_masks,
                     pred_boxes, pred_class_ids, pred_scores, pred_masks, class_id,
                     iou_threshold=0.5, score_threshold=0.0):
-    """Finds matches between prediction and ground truth instances. Edit: Class_id added to compute for each class
+    """Finds matches between prediction and ground truth instances. Edit: Class_id added to compute matches for each class.
 
     Returns:
         gt_match: 1-D array. For each GT box it has the index of the matched

@@ -638,7 +638,9 @@ def detection_targets_graph(proposals, gt_class_ids, gt_boxes, gt_masks, gt_scor
     deltas = tf.pad(tensor=deltas, paddings=[(0, N + P), (0, 0)])
     masks = tf.pad(tensor=masks, paddings=[[0, N + P], (0, 0), (0, 0)])
     roi_gt_scores = tf.pad(tensor=roi_gt_scores, paddings=[(0, N + P)])
-   
+    
+    roi_gt_scores = tf.cast(roi_gt_class_ids,tf.float32)
+
     return rois, roi_gt_class_ids, deltas, masks, roi_gt_scores
 
 
@@ -990,25 +992,19 @@ def fpn_classifier_graph(rois, feature_maps, image_meta,
     s = K.int_shape(x)
     if s[1] is None:
         mrcnn_bbox = KL.Reshape((-1, num_classes, 4), name="mrcnn_bbox")(x)
-        mrcnn_bbox=tf.compat.v1.Print(mrcnn_bbox, [tf.shape(mrcnn_bbox)], message="mrcnn_bbox: ")
-
     else:
         mrcnn_bbox = KL.Reshape((s[1], num_classes, 4), name="mrcnn_bbox")(x)
-        mrcnn_bbox=tf.compat.v1.Print(mrcnn_bbox, [tf.shape(mrcnn_bbox)], message="mrcnn_bbox: ")
 
     # Scoring head
-    x = KL.TimeDistributed(KL.Dense(num_classes, activation='softplus'),
+    x = KL.TimeDistributed(KL.Dense(num_classes, activation='linear'),
                             name='mrcnn_score_fc')(shared)
     # Reshape to [batch, num_rois, NUM_CLASSES, score]
     s = K.int_shape(x)
     if s[1] is None:
         mrcnn_score = KL.Reshape((-1, num_classes, 1), name="mrcnn_score")(x)
-        mrcnn_score=tf.compat.v1.Print(mrcnn_score, [tf.shape(mrcnn_score)], message="mrcnn_score: ")
-
     else:
         mrcnn_score = KL.Reshape((s[1], num_classes, 1), name="mrcnn_score")(x)
-        mrcnn_score=tf.compat.v1.Print(mrcnn_score, [tf.shape(mrcnn_score)], message="mrcnn_score: ")
-   
+
     return mrcnn_class_logits, mrcnn_probs, mrcnn_bbox, mrcnn_score
 
 
@@ -1072,6 +1068,7 @@ def smooth_l1_loss(y_true, y_pred):
     """Implements Smooth-L1 loss.
     y_true and y_pred are typically: [N, 4], but could be any shape.
     """
+   
     diff = K.abs(y_true - y_pred)
     less_than_one = K.cast(K.less(diff, 1.0), "float32")
     loss = (less_than_one * 0.5 * diff**2) + (1 - less_than_one) * (diff - 0.5)
@@ -1191,9 +1188,6 @@ def mrcnn_bbox_loss_graph(target_bbox, target_class_ids, pred_bbox):
     target_bbox = tf.gather(target_bbox, positive_roi_ix)
     pred_bbox = tf.gather_nd(pred_bbox, indices)
 
-    pred_bbox=tf.compat.v1.Print(pred_bbox, [tf.shape(pred_bbox)], message="bbox: ")
-
-
     # Smooth-L1 Loss
     loss = K.switch(tf.size(input=target_bbox) > 0,
                     smooth_l1_loss(y_true=target_bbox, y_pred=pred_bbox),
@@ -1201,40 +1195,13 @@ def mrcnn_bbox_loss_graph(target_bbox, target_class_ids, pred_bbox):
     loss = K.mean(loss)
     return loss
 
-def mrcnn_score_loss_graph(target_score, target_class_ids, pred_score):
-    """Loss for Mask R-CNN bounding box refinement.
 
-    target_score: [batch, num_rois]
-    target_class_ids: [batch, num_rois]. Integer class IDs.
-    pred_score: [batch, num_rois, num_classes]
-    """
-    # Reshape to merge batch and roi dimensions for simplicity.
-    target_class_ids = K.reshape(target_class_ids, (-1,))
-    target_score = K.reshape(target_score, (-1, 1))
-    pred_score = K.reshape(pred_score, (-1, K.int_shape(pred_score)[2], 1))
-
-    # Only positive ROIs contribute to the loss. And only
-    # the right class_id of each ROI. Get their indices.
-    positive_roi_ix = tf.compat.v1.where(target_class_ids > 0)[:, 0]
-    positive_roi_class_ids = tf.cast(
-        tf.gather(target_class_ids, positive_roi_ix), tf.int64)
-    indices = tf.stack([positive_roi_ix, positive_roi_class_ids], axis=1)
-
-    # Gather the scores (predicted and true) that contribute to loss. Only scores > 1 contribute to loss
-    target_score = tf.gather(target_score, positive_roi_ix)
-    pred_score = tf.gather_nd(pred_score, indices)
-    
-    positive_score_ix = tf.compat.v1.where(target_score > -1)[:, 0] 
-    target_score = tf.gather(target_score, positive_score_ix) 
-    pred_score = tf.gather(pred_score, positive_score_ix) 
-
+def mrcnn_score_loss_graph(score_true, score_pred):
+    """Loss for Scores """
     # Smooth-L1 Loss
-    loss = K.switch(tf.size(input=target_score) > 0,
-                    smooth_l1_loss(y_true=target_score, y_pred=pred_score),
-                    tf.constant(0.0))
+    loss = smooth_l1_loss(y_true=score_true, y_pred=score_pred)
     loss = K.mean(loss)
     return loss
-
 
 
 def mrcnn_mask_loss_graph(target_masks, target_class_ids, pred_masks):
@@ -2115,7 +2082,7 @@ class MaskRCNN(object):
             mask_loss = KL.Lambda(lambda x: mrcnn_mask_loss_graph(*x), name="mrcnn_mask_loss")(
                 [target_mask, target_class_ids, mrcnn_mask])
             score_loss = KL.Lambda(lambda x: mrcnn_score_loss_graph(*x), name="mrcnn_score_loss")(
-                [target_scores, target_class_ids, mrcnn_scores])
+                [target_scores, mrcnn_scores])
 
 
             # Model
@@ -2275,7 +2242,7 @@ class MaskRCNN(object):
         self.keras_model.compile(
             optimizer=optimizer,
             loss=[None] * len(self.keras_model.outputs))
-        
+
         # Add metrics for losses
         for name in loss_names:
             if name in self.keras_model.metrics_names:
