@@ -16,7 +16,7 @@ if len(sys.argv) < 2:
 
 # Set the ROOT_DIR variable to the root directory of the Mask_RCNN git repo
 ROOT_DIR = '../../'
-assert os.path.exists(ROOT_DIR), 'ROOT_DIR does not exist. Did you forget to read the instructions above? ;)'
+assert os.path.exists(ROOT_DIR), 'ROOT_DIR does not exist.'
 
 # Import mrcnn libraries
 sys.path.append(ROOT_DIR) 
@@ -48,11 +48,11 @@ class TrainingConfig(Config):
     IMAGES_PER_GPU = 1
 
     # Number of classes (including background)
-    NUM_CLASSES = 1 + 1  # background + 1 (hen)
+    NUM_CLASSES = 1 + 2  # background + 1 (hen)
 
-    # All of our training images are 512x512
-    IMAGE_MIN_DIM = None
-    IMAGE_MAX_DIM = 512 # must be dividable by 2 at least 6 times 
+    # Define image size
+    IMAGE_MIN_DIM = None 
+    IMAGE_MAX_DIM = 896 # must be dividable by 2 at least 6 times 
 
     # You can experiment with this number to see if it improves training
     STEPS_PER_EPOCH = 50 # 500
@@ -65,15 +65,16 @@ class TrainingConfig(Config):
     BACKBONE = 'resnet50'
 
     RPN_ANCHOR_SCALES = (8, 16, 32, 64, 128)
-    TRAIN_ROIS_PER_IMAGE = 32
+    TRAIN_ROIS_PER_IMAGE = 200
+    RPN_TRAIN_ANCHORS_PER_IMAGE =  256
     MAX_GT_INSTANCES = 20 
     POST_NMS_ROIS_INFERENCE = 500 
-    POST_NMS_ROIS_TRAINING = 1000 
+    POST_NMS_ROIS_TRAINING = 1000
     
 config = TrainingConfig()
 
 class InferenceConfig(TrainingConfig):
-      DETECTION_MIN_CONFIDENCE = 0.85
+      DETECTION_MIN_CONFIDENCE = 0.98
       USE_MINI_MASK = False 
 
 inference_config = InferenceConfig()
@@ -100,8 +101,8 @@ class CocoLikeDataset(utils.Dataset):
            class_name = category['name'] 
            if class_id < 1:
                 print('Error: Class id for "{}" cannot be less than one. (0 is reserved for the background)'.format(class_name))
-                return    
-        self.add_class(source_name, class_id, class_name)
+                return
+           self.add_class(source_name, class_id, class_name)
          
         classes = []     # to have a list which just contains the class names and the number of instances for each 
         for element in self.class_info:
@@ -128,7 +129,7 @@ class CocoLikeDataset(utils.Dataset):
             else:
                 seen_images[image_id] = image
                 try:
-                    #image_file_name = format(image['id'], '08d')+"_"+image['file_name']
+                   #image_file_name = format(image['id'], '08d')+"_"+image['file_name']
                     image_file_name = image['file_name'] 
                     print(image_file_name)
                     image_width = image['width']
@@ -157,6 +158,7 @@ class CocoLikeDataset(utils.Dataset):
                  if not hasCrowd:  # to avoid that images of object with "multiple parts" are added
                   for annotation in image_annotations:
                      id = (annotation['category_id'])+1
+                     print(id)
                      classes[id]['count'] +=1
                   self.add_image(
                       source=source_name,
@@ -188,14 +190,16 @@ class CocoLikeDataset(utils.Dataset):
         
         for annotation in annotations:
             class_id = annotation['category_id']+1
-            attributes = [element for element in  annotation['extra']['attributes'] if element.isdigit()]#
-            if len(attributes) > 0:
-               score = attributes[0]
+            if class_id ==1: # if annotation is hen, then the score is considered, otherwise it is -1 
+               attributes = [element for element in  annotation['extra']['attributes'] if element.isdigit()]#
+               if len(attributes) > 0:
+                  score = attributes[0]
+               else: score = -1 
             else: 
                score = -1 
                print("Missing Score at image", image_id)
-            print("SCORE:")
-            print(score) 
+            #print("SCORE:")
+            #print(score) 
             mask = Image.new('1', (image_info['width'], image_info['height']))
             mask_draw = ImageDraw.ImageDraw(mask, '1')
             for segmentation in annotation['segmentation']:
@@ -209,16 +213,19 @@ class CocoLikeDataset(utils.Dataset):
         mask = np.dstack(instance_masks)
         class_ids = np.array(class_ids, dtype=np.int32)
         scores = np.array(scores, dtype=np.float32)
-
+        print(scores)
+        print(class_ids)
         return mask, class_ids, scores
 
 dataset_train = CocoLikeDataset()
-dataset_train.load_data('/media/christian/SamsungSSD/ZED/datasets/1400_images/score_annotations.json', '/media/christian/SamsungSSD/ZED/datasets/1400_images/train/')
-dataset_train.prepare()
-print(dataset_train.num_classes)
+if(sys.argv[1] == "train"):
+   dataset_train.load_data('/media/christian/SamsungSSD/ZED/datasets/1500_images_with_damages/output.json', '/media/christian/SamsungSSD/ZED/datasets/1500_images_with_damages/train/')
+   dataset_train.load_data('/media/christian/SamsungSSD/ZED/datasets/1500_images_with_damages/output.json', '/media/christian/SamsungSSD/ZED/datasets/1500_images_with_damages/without_background/train/')
+   dataset_train.prepare()
+   print(dataset_train.num_classes)
 
 dataset_val = CocoLikeDataset()
-dataset_val.load_data('/media/christian/SamsungSSD/ZED/datasets/1400_images/score_annotations.json', '/media/christian/SamsungSSD/ZED/datasets/1400_images/val/')
+dataset_val.load_data('/media/christian/SamsungSSD/ZED/datasets/1500_images_with_damages/output.json', '/media/christian/SamsungSSD/ZED/datasets/1500_images_with_damages/val/')
 dataset_val.prepare()
 	
 #### Training ####
@@ -228,12 +235,14 @@ if(sys.argv[1] == "train"):
    # Create model in training mode
    model = modellib.MaskRCNN(mode="training", config=config,
                           model_dir=MODEL_DIR)
-   
+   print(model.keras_model.summary())
    # Which weights to start with?
    init_with = "coco"  # imagenet, coco, or last
 
    if init_with == "imagenet":
-       model.load_weights(model.get_imagenet_weights(), by_name=True)
+       model.load_weights(model.get_imagenet_weights(), by_name=True,
+                        exclude=["conv1", "mrcnn_class_logits", "mrcnn_bbox_fc", 
+                                "mrcnn_bbox", "mrcnn_mask", "mrcnn_score_fc", "mrcnn_score"])
    elif init_with == "coco":
        # Load weights trained on MS COCO, but skip layers that
        # are different due to the different number of classes
@@ -244,16 +253,16 @@ if(sys.argv[1] == "train"):
    elif init_with == "last":
        # Load weights from previous training 
        #model.load_weights(model.find_last(), by_name=True)
-       weights_path = os.path.join(ROOT_DIR, "/media/christian/SamsungSSD/tensorflow_logs/attribute_training_1000_epochs_depth_lr00005/mask_rcnn_feather__damage_0964.h5")  
+       weights_path = os.path.join(ROOT_DIR, "/media/christian/SamsungSSD/tensorflow_logs/...")  
        model.load_weights(weights_path, by_name=True,
                        exclude=[ "mrcnn_class_logits", "mrcnn_bbox_fc",
                                 "mrcnn_bbox", "mrcnn_mask", "mrcnn_score_fc", "mrcnn_score"])
 
-   # define augmentations (applied half of the time): left-right flip and brightness multiplication
-   augmentation = iaa.Sometimes(0.5, [
+   # define augmentations: left-right flip, crop, and brightness multiplication
+   augmentation = iaa.SomeOf((0,3), [
                     iaa.Fliplr(0.5),
-                    iaa.Affine(scale=(0.5, 1.5))
-                   #iaa.Multiply((0.6, 1.5)) #probably not working for RGBD
+                    iaa.Affine(scale=(0.5, 1.5)),
+                    iaa.Multiply((0.6, 1.5)) 
                 ])
    
    # Train the head branches and the first conv layer (because of additional depth channel)
@@ -270,7 +279,7 @@ if(sys.argv[1] == "train"):
    start_train = time.time()
    model.train(dataset_train, dataset_val, 
                learning_rate=config.LEARNING_RATE,
-               epochs=1000, 
+               epochs=2000, 
                layers="all",
                augmentation=augmentation)
    end_train = time.time()
@@ -300,16 +309,15 @@ elif(sys.argv[1] == "eval"):
        detections_total = [0]*len(self.dataset.class_info) # detections for each class  
        gt_instances_total = [0]*len(self.dataset.class_info) # gt_instances for each class
        squared_errors_total = [[]]*len(self.dataset.class_info)  # squared score error for each class
+       gt_scores_total = [[]]*len(self.dataset.class_info)  # all gt_scores for each class
+       pred_scores_total = [[]]*len(self.dataset.class_info)  # all predicted scores for each class
+       true_score_classes = [0]*len(self.dataset.class_info)  # number of correct score classes (1-3) for each class
        for index,image_id in enumerate(self.dataset.image_ids):
          print('\n')
          print("Processing image:id ",image_id) 
          # load image, bounding boxes and masks for the image id
          image, image_meta, gt_class_id, gt_bbox, gt_mask, gt_score = modellib.load_image_gt(self.dataset, self.cfg,image_id)
-         print("GT_Score:")
-         print(gt_score)
-         # convert pixel values (e.g. center)
-         #scaled_image = modellib.mold_image(image, self.cfg)
-         # convert image into one sample
+         
          sample = np.expand_dims(image, 0)
          # print(len(image))
          # make prediction
@@ -326,21 +334,36 @@ elif(sys.argv[1] == "eval"):
             print("Feather_Scores: ", r["scores"])
             gt_match, pred_match, overlaps = compute_matches(gt_bbox, gt_class_id, gt_mask, r["rois"], r["class_ids"], r["class_scores"], r['masks'], class_id)
             AP, precisions, recalls, _ = compute_ap(gt_bbox, gt_class_id, gt_mask, r["rois"], r["class_ids"], r["class_scores"], r['masks'], class_id)
-            visualize.display_instances(image[..., :3], r['rois'], r['masks'], r['class_ids'], 
-                                   dataset_val.class_names, r['class_scores'], r['scores'], figsize=(8,8), savepath=image_id) # added scores and save option  
+
             # Calculate Score Error
             pred_match_indices = pred_match[(pred_match>-1)].astype(int) # For each correctly predicted box it has the index of the matched gt box. 
             gt_match_indices = gt_match[(gt_match>-1)].astype(int) # for each correctly matched gt box it has the index of the matched predicted box   
             print("gt_score:", gt_score)
-            print("gt_bbox:", gt_bbox)
-            print("pred_match: ", pred_match)
-            pred_match_scores = gt_score[pred_match_indices] # scores of each correctly predicted box
-            error = np.absolute(np.subtract(gt_score[pred_match_indices],r["scores"][gt_match_indices]))
+            gt_match_scores = gt_score[pred_match_indices] # gt scores of each correctly predicted box 
+            print("gt_match_scores: ", gt_match_scores)
+            print("pred_scores: ", r["scores"])
+            positive_score_indices = np.where(gt_match_scores>-1) # indices of positive gt scores 
+            gt_positive_scores = gt_match_scores[positive_score_indices] 
+            pred_positive_scores = r["scores"][positive_score_indices]
+            print("positive_gt_scores: ", gt_positive_scores) 
+            print("positive_pred_scores: ", pred_positive_scores) 
+            gt_scores_total[class_id] = np.concatenate((gt_scores_total[class_id], gt_positive_scores))
+            pred_scores_total[class_id] = np.concatenate((pred_scores_total[class_id], pred_positive_scores))
+            error = np.absolute(np.subtract(gt_positive_scores,pred_positive_scores))
             squared_error = np.square(error)
             squared_error_image = np.sum(squared_error)
-            print("MSE image: ", squared_error_image/len(pred_match_indices))
+            print("MSE image: ", squared_error_image/len(positive_score_indices))
             squared_errors_total[class_id] = np.concatenate((squared_errors_total[class_id], squared_error))
             print("Current MSE: ", np.mean(squared_errors_total[class_id]))
+            #categorize scores in 3 classes and evaluate accuracy:
+            correct_score_class_count = len(np.where((np.round(gt_positive_scores)-np.round(pred_positive_scores))==0)[0])
+            print("Correct Score Classes:", correct_score_class_count)
+            true_score_classes[class_id] = true_score_classes[class_id] + correct_score_class_count
+            if len(squared_errors_total[class_id]) > 0:
+               score_accuracy = true_score_classes[class_id]/len(squared_errors_total[class_id])
+            else:
+               score_accuracy = 0 
+            print("Current Score Accuracy: ", score_accuracy)
             # calculate and sum up true positives and detections
             true_positives = sum(i> -1 for i in pred_match)
             detections = len(pred_match)
@@ -354,11 +377,18 @@ elif(sys.argv[1] == "eval"):
             print("detections: ", detections) 
             print("true_positives_total: ", true_positives_total[class_id])
             print("detections_total: {}", detections_total[class_id])
+            #print("(Predicted) Scores:" , gt_scores_total, pred_scores_total)
             precisions_dict[image_id] = np.mean(precisions)
             recall_dict[image_id] = np.mean(recalls)
             # store
             APs.append(AP)
             
+            #title = str(image_id) + 'no_mask'
+            visualize.display_instances(image[..., :3], r['rois'], r['masks'], r['class_ids'],
+                                   dataset_val.class_names, r['class_scores'], r['scores'], figsize=(8,8), show_mask=False, savepath=image_id) # added scores $
+            #visualize.display_differences(image[..., :3], gt_bbox, gt_class_id, gt_mask, gt_score, r['rois'], r['class_ids'], r['class_scores'],
+            #                       r['scores'], r['masks'], dataset_val.class_names,class_id, show_mask=False, savepath=image_id)
+
             #Analyze activations 
             import tensorflow as tf
             activations = self.model.run_graph([image], [
@@ -387,7 +417,7 @@ elif(sys.argv[1] == "eval"):
        mAP = np.mean(APs)
        for items in self.dataset.class_info:
             class_name = items["name"]
-            if class_name == "BG":
+            if class_name != "Hen":
                continue
             class_id = items["id"]
             precision = true_positives_total[class_id]/detections_total[class_id]
@@ -399,19 +429,25 @@ elif(sys.argv[1] == "eval"):
             print("recall: ", recall) 
             print("MSE: ", MSE)
 
-       return 0 # mAP,precisions_dict,recall_dict
+       np.savetxt(f, gt_scores_total[class_id], delimiter=',')
+       np.savetxt(f, pred_scores_total[class_id], delimiter=',')
+       f.write('Precision: {0} Recall: {1} MSE: {2}\n'.format(precision, recall, MSE))
+       return 0 
 
    #Create model in inference mode 
    model_inference = modellib.MaskRCNN(mode="inference", config=inference_config, model_dir=MODEL_DIR)
    print(model_inference.keras_model.summary())
    # Get path to saved weights
    # Either set a specific path or find last trained weights
-   model_path = os.path.join(ROOT_DIR, "/media/christian/SamsungSSD/tensorflow_logs/feather__damage20210129T1144/mask_rcnn_feather__damage_0480.h5")
+   model_path = os.path.join(ROOT_DIR, "/media/christian/SamsungSSD/tensorflow_logs/feather__damage20210323T1753/mask_rcnn_feather__damage_1475.h5")
    # model_path = model.find_last()
 
    # Load trained weights (fill in path to trained weights here)
    print("Loading weights from ", model_path)
    model_inference.load_weights(model_path, by_name=True)
-
+   
+   f = open("evaluation_log.txt", "a")
+   f.write('Evaluation model with weights {}\n'.format(model_path))
    eval = EvalImage(dataset_val,model_inference,inference_config)
    eval.evaluate_model()
+   f.close()

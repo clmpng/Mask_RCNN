@@ -19,7 +19,7 @@ import matplotlib.pyplot as plt
 from matplotlib import patches,  lines
 from matplotlib.patches import Polygon
 import IPython.display
-
+import cv2
 # Root directory of the project
 ROOT_DIR = os.path.abspath("../")
 
@@ -42,8 +42,7 @@ def display_images(images, titles=None, cols=4, cmap=None, norm=None,
     norm: Optional. A Normalize instance to map values to colors.
     interpolation: Optional. Image interpolation to use for display.
     """
-    titles = titles if titles is not None else [""] * len(images)
-    test = titles 
+    titles = titles if titles is not None else [""] * len(images) 
     rows = len(images) // cols + 1
     plt.figure(figsize=(14, 14 * rows // cols))
     i = 1
@@ -93,6 +92,7 @@ def display_instances(image, boxes, masks, class_ids, class_names,
     class_ids: [num_instances]
     class_names: list of class names of the dataset
     class_scores: (optional) confidence scores for each box
+    score: (feather condition) score for each box 
     title: (optional) Figure title
     show_mask, show_bbox: To show masks and bounding boxes or not
     figsize: (optional) the size of the image
@@ -147,7 +147,7 @@ def display_instances(image, boxes, masks, class_ids, class_names,
         else:
             caption = captions[i]
         ax.text(x1, y1 + 8, caption,
-                color='w', size=11, backgroundcolor="black")
+                color='w', size=11, backgroundcolor="none")
 
         # Mask
         mask = masks[:, :, i]
@@ -171,43 +171,105 @@ def display_instances(image, boxes, masks, class_ids, class_names,
     if auto_show:
         plt.show()
 
+def crop_instances(image, boxes, masks, class_ids, class_names,
+                      class_scores=None, scores=None, title="",
+                      figsize=None,individual_masks=False, savepath=None):
+    """
+    boxes: [num_instance, (y1, x1, y2, x2, class_id)] in image coordinates.
+    masks: [height, width, num_instances]
+    class_ids: [num_instances]
+    class_names: list of class names of the dataset
+    class_scores: (optional) confidence scores for each box
+    score: (feather condition) score for each box 
+    title: (optional) Figure title
+    individual_masks To create individual image for each instance mask or not
+    figsize: (optional) the size of the image
+    """
+    #if rgb, convert to bgr to be in cv2 format:
+    if image.shape[2] == 3:
+       image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+    # Number of instances
+    N = boxes.shape[0]
+    if not N:
+        print("\n*** No instances to display *** \n")
+    else:
+        assert boxes.shape[0] == masks.shape[-1] == class_ids.shape[0]
 
+    masked_image = image.copy()
+    empty_image = image[:, :, :]*0
+    for i in range(N):
+
+        if not np.any(boxes[i]):
+            # Skip this instance. Has no bbox. Likely lost in image cropping.
+            continue
+        # # Mask
+        mask = masks[:, :, i]
+       
+        if individual_masks: # every pixel outside the current mask is set to 0
+           for c in range(image.shape[2]):
+              masked_image[:, :, c] = np.where(mask == 1,
+                                   image[:, :, c],
+                                   image[:, :, c]*0)
+           y1, x1, y2, x2 = boxes[i]
+           cropped_instance = masked_image[y1:y2, x1:x2,:]
+           savepath_instance = savepath.replace(".png", "_instance_" + str(i) +".png")
+           cv2.imwrite(savepath_instance, cropped_instance)
+       
+        if not individual_masks: # every pixel is zero only if its not part of a mask
+           for c in range(image.shape[2]):
+              empty_image[:, :, c] = np.where(mask == 1,
+                                   image[:, :, c],
+                                   empty_image[:, :, c])
+
+    if not individual_masks:
+       cv2.imwrite(savepath, empty_image)
+   
+            
 def display_differences(image,
-                        gt_box, gt_class_id, gt_mask,
-                        pred_box, pred_class_id, pred_score, pred_mask,
-                        class_names, title="", ax=None,
-                        show_mask=True, show_box=True,
+                        gt_box, gt_class_id, gt_mask, gt_score,
+                        pred_box, pred_class_id, pred_class_score, pred_score, pred_mask,
+                        class_names, class_id, title="", ax=None,
+                        show_mask=True, show_box=True, savepath=None,
                         iou_threshold=0.5, score_threshold=0.5):
     """Display ground truth and prediction instances on the same image."""
     # Match predictions to ground truth
     gt_match, pred_match, overlaps = utils.compute_matches(
         gt_box, gt_class_id, gt_mask,
-        pred_box, pred_class_id, pred_score, pred_mask,
+        pred_box, pred_class_id, pred_class_score, pred_mask, class_id,
         iou_threshold=iou_threshold, score_threshold=score_threshold)
+
     # Ground truth = green. Predictions = red
     colors = [(0, 1, 0, .8)] * len(gt_match)\
            + [(1, 0, 0, 1)] * len(pred_match)
     # Concatenate GT and predictions
     class_ids = np.concatenate([gt_class_id, pred_class_id])
-    scores = np.concatenate([np.zeros([len(gt_match)]), pred_score])
+    class_scores = np.concatenate([np.zeros([len(gt_match)]), pred_class_score])
+    scores = np.concatenate([gt_score, pred_score])
     boxes = np.concatenate([gt_box, pred_box])
     masks = np.concatenate([gt_mask, pred_mask], axis=-1)
-    # Captions per instance show score/IoU
-    captions = ["" for m in gt_match] + ["{:.2f} / {:.2f}".format(
+    # Captions per instance show pred_score/gt_score
+    captions = ["" for m in gt_match] + ['{:.2f} / {:.2f}'.format(
         pred_score[i],
-        (overlaps[i, int(pred_match[i])]
-            if pred_match[i] > -1 else overlaps[i].max()))
-            for i in range(len(pred_match))]
+         (gt_score[int(pred_match[i])] if pred_match[i] > -1 else -1))
+             for i in range(len(pred_match))]
+
+
+    # Captions per instance show score/IoU
+    # captions = ["" for m in gt_match] + ["{:.2f} / {:.2f}".format(
+    #    pred_class_score[i],
+    #    (overlaps[i, int(pred_match[i])]
+    #        if pred_match[i] > -1 else overlaps[i].max()))
+    #        for i in range(len(pred_match))]
     # Set title if not provided
-    title = title or "Ground Truth and Detections\n GT=green, pred=red, captions: score/IoU"
+    title = title or "Ground Truth and Detections\n GT=green, pred=red, captions: pred_score/gt_score"
     # Display
     display_instances(
         image,
         boxes, masks, class_ids,
-        class_names, scores, ax=ax,
+        class_names, class_scores, scores, ax=ax,
         show_bbox=show_box, show_mask=show_mask,
         colors=colors, captions=captions,
-        title=title)
+        title=title, savepath=savepath)
 
 
 def draw_rois(image, rois, refined_rois, mask, class_ids, class_names, limit=10):

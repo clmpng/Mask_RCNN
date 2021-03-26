@@ -719,15 +719,9 @@ def refine_detections_graph(rois, probs, deltas, window, config):
         coordinates are normalized.
     """
     # Class IDs per ROI
-    print("Probs: --------------------------------------")
-    print(probs)
     class_ids = tf.argmax(input=probs, axis=1, output_type=tf.int32)
-    print("CLASS-IDS: --------------------------------------")
-    print(class_ids)
     # Class probability of the top class of each ROI
     indices = tf.stack([tf.range(probs.shape[0]), class_ids], axis=1)
-    print("Indices: --------------------------------------")
-    print(indices)
     class_scores = tf.gather_nd(probs, indices)
     # Class-specific bounding box deltas
     deltas_specific = tf.gather_nd(deltas, indices)
@@ -742,12 +736,12 @@ def refine_detections_graph(rois, probs, deltas, window, config):
 
     # Filter out background boxes
     keep = tf.compat.v1.where(class_ids > 0)[:, 0]
-    # Filter out low  confidence boxes
-   # if config.DETECTION_MIN_CONFIDENCE:
-    #    conf_keep = tf.compat.v1.where(class_scores >= config.DETECTION_MIN_CONFIDENCE)[:, 0]
-    #    keep = tf.sets.intersection(tf.expand_dims(keep, 0),
-    #                                    tf.expand_dims(conf_keep, 0))
-    #    keep = tf.sparse.to_dense(keep)[0]
+    # Filter out low confidence boxes
+    if config.DETECTION_MIN_CONFIDENCE:
+        conf_keep = tf.compat.v1.where(class_scores >= config.DETECTION_MIN_CONFIDENCE)[:, 0]
+        keep = tf.sets.intersection(tf.expand_dims(keep, 0),
+                                        tf.expand_dims(conf_keep, 0))
+        keep = tf.sparse.to_dense(keep)[0]
 
     # Apply per-class NMS
     # 1. Prepare variables
@@ -778,7 +772,7 @@ def refine_detections_graph(rois, probs, deltas, window, config):
 
     # 2. Map over class IDs
     nms_keep = tf.map_fn(nms_keep_map, unique_pre_nms_class_ids,
-                         dtype=tf.int64)  # changed type from int64 tp float32
+                         dtype=tf.int64)
     # 3. Merge results into one list, and remove -1 padding
     nms_keep = tf.reshape(nms_keep, [-1])
     nms_keep = tf.gather(nms_keep, tf.compat.v1.where(nms_keep > -1)[:, 0])
@@ -826,8 +820,6 @@ class DetectionLayer(KL.Layer):
         return config
 
     def call(self, inputs):
-        print("Detection layer Inputs:")
-        print(inputs)
         rois = inputs[0]
         mrcnn_class = inputs[1]
         mrcnn_bbox = inputs[2]
@@ -972,9 +964,9 @@ def fpn_classifier_graph(rois, feature_maps, image_meta,
                        name="pool_squeeze")(x)
 
     # Classifier head
-    mrcnn_class_logits = KL.TimeDistributed(KL.Dense(1),
+    mrcnn_class_logits = KL.TimeDistributed(KL.Dense(num_classes),
                                             name='mrcnn_class_logits')(shared)
-    mrcnn_probs = KL.TimeDistributed(KL.Activation("linear"),    # replace softmax and fc by fc of size 1 
+    mrcnn_probs = KL.TimeDistributed(KL.Activation("softmax"),
                                      name="mrcnn_class")(mrcnn_class_logits)
     # BBox head
     # [batch, num_rois, NUM_CLASSES * (dy, dx, log(dh), log(dw))]
@@ -1124,22 +1116,21 @@ def mrcnn_class_loss_graph(target_class_ids, pred_class_logits,
     # During model building, Keras calls this function with
     # target_class_ids of type float32. Unclear why. Cast it
     # to int to get around it.
-    target_class_ids = tf.cast(target_class_ids, 'float32')
+    target_class_ids = tf.cast(target_class_ids, 'int64')
 
     # Find predictions of classes that are not in the dataset.
     pred_class_ids = tf.argmax(input=pred_class_logits, axis=2)
     # TODO: Update this line to work with batch > 1. Right now it assumes all
     #       images in a batch have the same active_class_ids
     pred_active = tf.gather(active_class_ids[0], pred_class_ids)
-    print("PRED_CLASS_IDS------")
-    print(pred_class_ids)
+
     # Loss
-    loss = smooth_l1_loss(y_true=target_class_ids, y_pred=pred_class_logits) #tf.nn.sparse_softmax_cross_entropy_with_logits(   # for a first try, the same loss a for bounding box - smooth l1 - was used 
-        #labels=target_class_ids, logits=pred_class_logits)
+    loss = tf.nn.sparse_softmax_cross_entropy_with_logits(
+        labels=target_class_ids, logits=pred_class_logits)
 
     # Erase losses of predictions of classes that are not in the active
     # classes of the image.
-    #loss = loss * pred_active
+    loss = loss * pred_active
 
     # Computer loss mean. Use only predictions that contribute
     # to the loss to get a correct mean.
@@ -1293,9 +1284,9 @@ def load_image_gt(dataset, config, image_id, augmentation=None):
     # Active classes
     # Different datasets have different classes, so track the
     # classes supported in the dataset of this image.
-    active_class_ids = np.ones(2, dtype=np.int32) #np.zeros([dataset.num_classes], dtype=np.int32)
-    #source_class_ids = dataset.source_class_ids[dataset.image_info[image_id]["source"]]
-    #active_class_ids[source_class_ids] = 1
+    active_class_ids = np.zeros([dataset.num_classes], dtype=np.int32)
+    source_class_ids = dataset.source_class_ids[dataset.image_info[image_id]["source"]]
+    active_class_ids[source_class_ids] = 1
 
     # Resize masks to smaller size to reduce memory usage
     if config.USE_MINI_MASK:
@@ -2011,6 +2002,7 @@ class MaskRCNN(object):
                                      config.POOL_SIZE, config.NUM_CLASSES,
                                      train_bn=config.TRAIN_BN,
                                      fc_layers_size=config.FPN_CLASSIF_FC_LAYERS_SIZE)
+
             mrcnn_mask = build_fpn_mask_graph(rois, mrcnn_feature_maps,
                                               input_image_meta,
                                               config.MASK_POOL_SIZE,
@@ -2405,7 +2397,7 @@ class MaskRCNN(object):
             # Build image_meta
             image_meta = compose_image_meta(
                 0, image.shape, molded_image.shape, window, scale,
-                np.zeros(2, dtype=np.int32))
+                np.zeros([self.config.NUM_CLASSES], dtype=np.int32))
             # Append
             molded_images.append(molded_image)
             windows.append(window)
@@ -2481,7 +2473,7 @@ class MaskRCNN(object):
 
         return boxes, class_ids, scores, full_masks
 
-    def detect(self, images, verbose=1):
+    def detect(self, images, verbose=0):
         """Runs the detection pipeline.
 
         images: List of images, potentially of different sizes.
@@ -2523,11 +2515,7 @@ class MaskRCNN(object):
             log("anchors", anchors)
         # Run object detection
         detections, _, _, mrcnn_mask, _, _, _ =\
-            self.keras_model.predict([molded_images, image_metas, anchors], verbose=1)
-        log("image_metas:")
-        log(image_metas)
-        log("detections: ") 
-        log(detections)
+            self.keras_model.predict([molded_images, image_metas, anchors], verbose=0)
         # Process detections
         results = []
         for i, image in enumerate(images):
@@ -2543,7 +2531,7 @@ class MaskRCNN(object):
             })
         return results
 
-    def detect_molded(self, molded_images, image_metas, verbose=1):
+    def detect_molded(self, molded_images, image_metas, verbose=0):
         """Runs the detection pipeline, but expect inputs that are
         molded already. Used mostly for debugging and inspecting
         the model.
@@ -2584,7 +2572,7 @@ class MaskRCNN(object):
             log("anchors", anchors)
         # Run object detection
         detections, _, _, mrcnn_mask, _, _, _ =\
-            self.keras_model.predict([molded_images, image_metas, anchors], verbose=1)
+            self.keras_model.predict([molded_images, image_metas, anchors], verbose=0)
         # Process detections
         results = []
         for i, image in enumerate(molded_images):
@@ -2742,7 +2730,6 @@ def compose_image_meta(image_id, original_image_shape, image_shape,
         the image came. Useful if training on images from multiple datasets
         where not all classes are present in all datasets.
     """
-    print(active_class_ids)
     meta = np.array(
         [image_id] +                  # size=1
         list(original_image_shape) +  # size=3
@@ -2751,7 +2738,6 @@ def compose_image_meta(image_id, original_image_shape, image_shape,
         [scale] +                     # size=1
         list(active_class_ids)        # size=num_classes
     )
-    print(meta)
     return meta
 
 

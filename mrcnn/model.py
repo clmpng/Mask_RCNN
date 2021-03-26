@@ -183,6 +183,10 @@ def resnet_graph(input_image, architecture, stage5=False, train_bn=True):
     C1 = x = KL.MaxPooling2D((3, 3), strides=(2, 2), padding="same")(x)
     # Stage 2
     x = conv_block(x, 3, [64, 64, 256], stage=2, block='a', strides=(1, 1), train_bn=train_bn)
+    #x = identity_block(x, 3, [64, 64, 256], stage=2, block='b', train_bn=train_bn)
+    #x = identity_block(x, 3, [64, 64, 256], stage=2, block='c', train_bn=train_bn)
+    #x = identity_block(x, 3, [64, 64, 256], stage=2, block='d', train_bn=train_bn)
+    #x = identity_block(x, 3, [64, 64, 256], stage=2, block='e', train_bn=train_bn)
     x = identity_block(x, 3, [64, 64, 256], stage=2, block='b', train_bn=train_bn)
     C2 = x = identity_block(x, 3, [64, 64, 256], stage=2, block='c', train_bn=train_bn)
     # Stage 3
@@ -990,24 +994,24 @@ def fpn_classifier_graph(rois, feature_maps, image_meta,
     s = K.int_shape(x)
     if s[1] is None:
         mrcnn_bbox = KL.Reshape((-1, num_classes, 4), name="mrcnn_bbox")(x)
-        mrcnn_bbox=tf.compat.v1.Print(mrcnn_bbox, [tf.shape(mrcnn_bbox)], message="mrcnn_bbox: ")
-
+        
     else:
         mrcnn_bbox = KL.Reshape((s[1], num_classes, 4), name="mrcnn_bbox")(x)
-        mrcnn_bbox=tf.compat.v1.Print(mrcnn_bbox, [tf.shape(mrcnn_bbox)], message="mrcnn_bbox: ")
-
+        
     # Scoring head
+    #x = KL.TimeDistributed(KL.Dense(fc_layers_size),
+    #                       name="mrcnn_score_dense")(shared)
+    #x = KL.TimeDistributed(BatchNorm(), name='mrcnn_score_bn1')(x, training=train_bn)
+    #x = KL.Activation('relu')(x)
     x = KL.TimeDistributed(KL.Dense(num_classes, activation='softplus'),
                             name='mrcnn_score_fc')(shared)
     # Reshape to [batch, num_rois, NUM_CLASSES, score]
     s = K.int_shape(x)
     if s[1] is None:
         mrcnn_score = KL.Reshape((-1, num_classes, 1), name="mrcnn_score")(x)
-        mrcnn_score=tf.compat.v1.Print(mrcnn_score, [tf.shape(mrcnn_score)], message="mrcnn_score: ")
 
     else:
         mrcnn_score = KL.Reshape((s[1], num_classes, 1), name="mrcnn_score")(x)
-        mrcnn_score=tf.compat.v1.Print(mrcnn_score, [tf.shape(mrcnn_score)], message="mrcnn_score: ")
    
     return mrcnn_class_logits, mrcnn_probs, mrcnn_bbox, mrcnn_score
 
@@ -1067,6 +1071,15 @@ def build_fpn_mask_graph(rois, feature_maps, image_meta,
 ############################################################
 #  Loss Functions
 ############################################################
+
+def l2_loss(y_true, y_pred):
+    """Implements L2 loss / Mean Squared Error
+    y_true and y_pred are typically: [N, 4], but could be any shape.
+    """
+    diff = K.abs(y_true - y_pred)
+    loss = diff**2 
+    return loss
+
 
 def smooth_l1_loss(y_true, y_pred):
     """Implements Smooth-L1 loss.
@@ -1191,9 +1204,7 @@ def mrcnn_bbox_loss_graph(target_bbox, target_class_ids, pred_bbox):
     target_bbox = tf.gather(target_bbox, positive_roi_ix)
     pred_bbox = tf.gather_nd(pred_bbox, indices)
 
-    pred_bbox=tf.compat.v1.Print(pred_bbox, [tf.shape(pred_bbox)], message="bbox: ")
-
-
+    
     # Smooth-L1 Loss
     loss = K.switch(tf.size(input=target_bbox) > 0,
                     smooth_l1_loss(y_true=target_bbox, y_pred=pred_bbox),
@@ -1322,7 +1333,7 @@ def load_image_gt(dataset, config, image_id, augmentation=None):
                            "Affine", "PiecewiseAffine"]
 
         def hook(images, augmenter, parents, default):
-            """Determines which augmenters to apply to masks."""
+            """Determines which augmenters to apply to masks (and to depth channel)."""
             return augmenter.__class__.__name__ in MASK_AUGMENTERS
 
         # Store shapes before augmentation to compare
@@ -1330,7 +1341,14 @@ def load_image_gt(dataset, config, image_id, augmentation=None):
         mask_shape = mask.shape
         # Make augmenters deterministic to apply similarly to images and masks
         det = augmentation.to_deterministic()
-        image = det.augment_image(image)
+        # Separate rgb from depth:
+        rgb_image = det.augment_image(image[..., :3].astype(np.uint8))
+        # only apply valid  augmenters to depth channel 
+        depth_channel = det.augment_image(image[..., 3],
+                                 hooks=imgaug.HooksImages(activator=hook))
+        # Unite rgb and depth again
+        depth_image = depth_channel[:, :, np.newaxis]
+        image = np.concatenate((rgb_image, depth_image), axis=2)
         # Change mask to np.uint8 because imgaug doesn't support np.bool
         mask = det.augment_image(mask.astype(np.uint8),
                                  hooks=imgaug.HooksImages(activator=hook))
@@ -1365,7 +1383,13 @@ def load_image_gt(dataset, config, image_id, augmentation=None):
     # Image meta data
     image_meta = compose_image_meta(image_id, original_shape, image.shape,
                                     window, scale, active_class_ids)
-
+    print(image_id)
+    print(original_shape)
+    print(image.shape)
+    print(window)
+    print(scale)
+    print(scores)
+    print(active_class_ids)
     return image, image_meta, class_ids, bbox, mask, scores
 
 
@@ -2425,7 +2449,7 @@ class MaskRCNN(object):
         # Callbacks
         callbacks = [
             keras.callbacks.TensorBoard(log_dir=self.log_dir,
-                                        histogram_freq=0, write_graph=True, write_images=False),
+                                        histogram_freq=0, write_graph=False, write_images=False),
             keras.callbacks.ModelCheckpoint(self.checkpoint_path,
                                             verbose=0, save_weights_only=True)
         ]
@@ -2458,7 +2482,7 @@ class MaskRCNN(object):
             validation_data=val_generator,
             validation_steps=self.config.VALIDATION_STEPS,
             max_queue_size=100,
-            workers=1, #workers,
+            workers=0, #workers,
             use_multiprocessing=False, #workers > 1,
         )
         self.epoch = max(self.epoch, epochs)

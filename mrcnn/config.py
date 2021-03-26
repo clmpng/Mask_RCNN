@@ -124,8 +124,8 @@ class Config(object):
     #         size IMAGE_MIN_DIM x IMAGE_MIN_DIM. Can be used in training only.
     #         IMAGE_MAX_DIM is not used in this mode.
     IMAGE_RESIZE_MODE = "square"
-    IMAGE_MIN_DIM = 800
-    IMAGE_MAX_DIM = 1024
+    IMAGE_MIN_DIM = 1104 #800
+    IMAGE_MAX_DIM = 1242 #1024
     # Minimum scaling ratio. Checked after MIN_IMAGE_DIM and can force further
     # up scaling. For example, if set to 2 then images are scaled up to double
     # the width and height, or more, even if MIN_IMAGE_DIM doesn't require it.
@@ -136,8 +136,8 @@ class Config(object):
     # details: https://github.com/matterport/Mask_RCNN/wiki
     IMAGE_CHANNEL_COUNT = 4
 
-    # Image mean (RGB)
-    MEAN_PIXEL = np.array([123.7, 116.8, 103.9, 100.0]) # just a guess for channel 4
+    # Image mean (RGBD)
+    MEAN_PIXEL = np.array([123.7, 116.8, 103.9, 100.0]) # 100 is just a guess for channel 4
 
     # Number of ROIs per image to feed to classifier/mask heads
     # The Mask RCNN paper uses 512 but often the RPN doesn't generate

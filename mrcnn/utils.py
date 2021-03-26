@@ -352,9 +352,19 @@ class Dataset(object):
         """
         return self.image_info[image_id]["path"]
 
-          
+    def get_depth_path(self, image_id):
+        """determine and return the path for the depth image corresponding to the image of image_id
+        """
+        directory, file_name = os.path.split(self.image_info[image_id]['path'])
+        file_name_short = file_name.replace('_', '.').split('.')[0]
+        directory, folder = os.path.split(directory)
+        directory, train_or_val = os.path.split(directory)
+        depth_file_name = "depth" + file_name_short.replace('left', '') + ".png"
+        depth_path= os.path.join(directory, "depth",train_or_val, folder, depth_file_name)
+        return depth_path
+
     def load_image(self, image_id):
-        """Load the specified image and return a [H,W,3] Numpy array.
+        """Load the specified image and return a [H,W,4] Numpy array.
         """
         # Load image
         image = skimage.io.imread(self.image_info[image_id]['path'])
@@ -366,13 +376,9 @@ class Dataset(object):
         if image.shape[-1] == 4:
             image = image[..., :3]
         #determine depth image path and load depth image
-        directory, file_name = os.path.split(self.image_info[image_id]['path'])
-        file_name_short = file_name.replace('_', '.').split('.')[0]
-        directory, folder = os.path.split(directory)
-        directory, train_or_val = os.path.split(directory)
-        depth_file_name = "depth" + file_name_short.replace('left', '') + ".png"
-        depth_path= os.path.join(directory, "depth",train_or_val, folder, depth_file_name)
-        print(depth_path)
+        depth_path= self.get_depth_path(image_id)
+        #print("RGB:")
+        #print(image[200,200])
         depth = skimage.io.imread(depth_path)
         #depth threshold in milimeters
         #threshold = 1500
@@ -385,6 +391,8 @@ class Dataset(object):
         depth_image = depth[:, :, np.newaxis]
         # to do: exclude this to own function "Load_depth_image"
         rgbd_image = np.concatenate((image, depth_image), axis=2)
+        #print("RGBD:")
+        #print(rgbd_image[200,200])
         return rgbd_image
 
     def load_mask(self, image_id):
