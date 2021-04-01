@@ -363,7 +363,7 @@ class Dataset(object):
         depth_path= os.path.join(directory, "depth",train_or_val, folder, depth_file_name)
         return depth_path
 
-    def load_image(self, image_id):
+    def load_image(self, image_id, use_depth=True):
         """Load the specified image and return a [H,W,4] Numpy array.
         """
         # Load image
@@ -375,25 +375,26 @@ class Dataset(object):
         # If has an alpha channel, remove it for consistency
         if image.shape[-1] == 4:
             image = image[..., :3]
-        #determine depth image path and load depth image
-        depth_path= self.get_depth_path(image_id)
-        #print("RGB:")
-        #print(image[200,200])
-        depth = skimage.io.imread(depth_path)
-        #depth threshold in milimeters
-        #threshold = 1500
-        #idx = depth[:] > threshold
-        #depth[idx] = threshold
-        #normalize depth:
-        min_depth = np.min(depth)
-        max_depth = np.max(depth)
-        depth = (depth-min_depth) / (max_depth - min_depth)*255
-        depth_image = depth[:, :, np.newaxis]
-        # to do: exclude this to own function "Load_depth_image"
-        rgbd_image = np.concatenate((image, depth_image), axis=2)
-        #print("RGBD:")
-        #print(rgbd_image[200,200])
-        return rgbd_image
+        if use_depth:   
+           #determine depth image path and load depth image
+           depth_path= self.get_depth_path(image_id)
+           #print("RGB:")
+           #print(image[200,200])
+           depth = skimage.io.imread(depth_path)
+           #depth threshold in milimeters
+           #threshold = 1500
+           #idx = depth[:] > threshold
+           #depth[idx] = threshold
+           #normalize depth:
+           min_depth = np.min(depth)
+           max_depth = np.max(depth)
+           depth = (depth-min_depth) / (max_depth - min_depth)*255
+           depth_image = depth[:, :, np.newaxis]
+           # to do: exclude this to own function "Load_depth_image"
+           image = np.concatenate((image, depth_image), axis=2)
+           #print("RGBD:")
+           #print(image[200,200])
+        return image
 
     def load_mask(self, image_id):
         """Load instance masks for the given image.

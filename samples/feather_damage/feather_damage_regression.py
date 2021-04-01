@@ -281,7 +281,8 @@ if(sys.argv[1] == "train"):
                learning_rate=config.LEARNING_RATE,
                epochs=2000, 
                layers="all",
-               augmentation=augmentation)
+               augmentation=augmentation,
+               use_depth=False)
    end_train = time.time()
    minutes = round((end_train - start_train) / 60, 2)
    print(f'Training took {minutes} minutes')
@@ -316,7 +317,7 @@ elif(sys.argv[1] == "eval"):
          print('\n')
          print("Processing image:id ",image_id) 
          # load image, bounding boxes and masks for the image id
-         image, image_meta, gt_class_id, gt_bbox, gt_mask, gt_score = modellib.load_image_gt(self.dataset, self.cfg,image_id)
+         image, image_meta, gt_class_id, gt_bbox, gt_mask, gt_score = modellib.load_image_gt(self.dataset, self.cfg,image_id,use_depth=False)
          
          sample = np.expand_dims(image, 0)
          # print(len(image))
@@ -439,7 +440,7 @@ elif(sys.argv[1] == "eval"):
    print(model_inference.keras_model.summary())
    # Get path to saved weights
    # Either set a specific path or find last trained weights
-   model_path = os.path.join(ROOT_DIR, "/media/christian/SamsungSSD/tensorflow_logs/feather__damage20210323T1753/mask_rcnn_feather__damage_1475.h5")
+   model_path = os.path.join(ROOT_DIR, "/media/christian/SamsungSSD/tensorflow_logs/score_training_1477_epochs_with_feather_damages/mask_rcnn_feather__damage_1400.h5")
    # model_path = model.find_last()
 
    # Load trained weights (fill in path to trained weights here)

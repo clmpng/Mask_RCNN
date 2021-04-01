@@ -1291,7 +1291,7 @@ def mrcnn_mask_loss_graph(target_masks, target_class_ids, pred_masks):
 #  Data Generator
 ############################################################
 
-def load_image_gt(dataset, config, image_id, augmentation=None):
+def load_image_gt(dataset, config, image_id, augmentation=None, use_depth=True):
     """Load and return ground truth data for an image (image, mask, bounding boxes, scores).
 
     augmentation: Optional. An imgaug (https://github.com/aleju/imgaug) augmentation.
@@ -1309,7 +1309,7 @@ def load_image_gt(dataset, config, image_id, augmentation=None):
     scores: [instance_count] Scores for each instance (float)
     """
     # Load image and mask
-    image = dataset.load_image(image_id)
+    image = dataset.load_image(image_id, use_depth=use_depth)
     mask, class_ids, scores = dataset.load_mask(image_id)
     original_shape = image.shape
     image, window, scale, padding, crop = utils.resize_image(
@@ -1341,14 +1341,16 @@ def load_image_gt(dataset, config, image_id, augmentation=None):
         mask_shape = mask.shape
         # Make augmenters deterministic to apply similarly to images and masks
         det = augmentation.to_deterministic()
-        # Separate rgb from depth:
-        rgb_image = det.augment_image(image[..., :3].astype(np.uint8))
-        # only apply valid  augmenters to depth channel 
-        depth_channel = det.augment_image(image[..., 3],
+        if not use_depth:   
+           image = det.augment_image(image[..., :3].astype(np.uint8))
+        else:   
+           rgb_image = det.augment_image(image[..., :3].astype(np.uint8))
+           # only apply valid  augmenters to depth channel 
+           depth_channel = det.augment_image(image[..., 3],
                                  hooks=imgaug.HooksImages(activator=hook))
-        # Unite rgb and depth again
-        depth_image = depth_channel[:, :, np.newaxis]
-        image = np.concatenate((rgb_image, depth_image), axis=2)
+           # Unite rgb and depth again
+           depth_image = depth_channel[:, :, np.newaxis]
+           image = np.concatenate((rgb_image, depth_image), axis=2)
         # Change mask to np.uint8 because imgaug doesn't support np.bool
         mask = det.augment_image(mask.astype(np.uint8),
                                  hooks=imgaug.HooksImages(activator=hook))
@@ -1383,13 +1385,7 @@ def load_image_gt(dataset, config, image_id, augmentation=None):
     # Image meta data
     image_meta = compose_image_meta(image_id, original_shape, image.shape,
                                     window, scale, active_class_ids)
-    print(image_id)
-    print(original_shape)
-    print(image.shape)
-    print(window)
-    print(scale)
-    print(scores)
-    print(active_class_ids)
+
     return image, image_meta, class_ids, bbox, mask, scores
 
 
@@ -1781,12 +1777,13 @@ class DataGenerator(KU.Sequence):
         """
 
     def __init__(self, dataset, config, shuffle=True, augmentation=None,
-                 random_rois=0, detection_targets=False):
+                 random_rois=0, detection_targets=False, use_depth=True):
         print("Datagenerator called") 
         self.image_ids = np.copy(dataset.image_ids)
         #print(self.image_ids)
         self.dataset = dataset
         self.config = config
+        self.use_depth = use_depth
 
         # Anchors
         # [anchor_count, (y1, x1, y2, x2)]
@@ -1820,7 +1817,7 @@ class DataGenerator(KU.Sequence):
             image_id = self.image_ids[image_index]
             image, image_meta, gt_class_ids, gt_boxes, gt_masks, gt_scores = \
                 load_image_gt(self.dataset, self.config, image_id,
-                              augmentation=self.augmentation)
+                              augmentation=self.augmentation, use_depth=self.use_depth)
 
             # Skip images that have no instances. This can happen in cases
             # where we train on a subset of classes and the image doesn't
@@ -2388,7 +2385,7 @@ class MaskRCNN(object):
             "*epoch*", "{epoch:04d}")
 
     def train(self, train_dataset, val_dataset, learning_rate, epochs, layers,
-              augmentation=None, custom_callbacks=None, no_augmentation_sources=None):
+              augmentation=None, custom_callbacks=None, no_augmentation_sources=None, use_depth=True):
         """Train the model.
         train_dataset, val_dataset: Training and validation Dataset objects.
         learning_rate: The learning rate to train with
@@ -2420,6 +2417,7 @@ class MaskRCNN(object):
         no_augmentation_sources: Optional. List of sources to exclude for
             augmentation. A source is string that identifies a dataset and is
             defined in the Dataset class.
+        use_depth: Define if RGB or RGBD-Images are used 
         """
         assert self.mode == "training", "Create model in training mode."
 
@@ -2439,8 +2437,8 @@ class MaskRCNN(object):
 
         # Data generators
         train_generator = DataGenerator(train_dataset, self.config, shuffle=True,
-                                         augmentation=augmentation)
-        val_generator = DataGenerator(val_dataset, self.config, shuffle=True)
+                                         augmentation=augmentation, use_depth=use_depth)
+        val_generator = DataGenerator(val_dataset, self.config, shuffle=True, use_depth=use_depth)
 
         # Create log_dir if it does not exist
         if not os.path.exists(self.log_dir):
@@ -3045,7 +3043,7 @@ class MeanAveragePrecisionCallback(Callback):
 
         for image_id in self.dataset_image_ids[:self.dataset_limit]:
             image, image_meta, gt_class_id, gt_bbox, gt_mask = load_image_gt(self.dataset, self.inference_model.config,
-                                                                             image_id)
+                                                                             image_id, use_depth=True)
             molded_images = np.expand_dims(mold_image(image, self.inference_model.config), 0)
             results = self.inference_model.detect(molded_images, verbose=0)
             r = results[0]
